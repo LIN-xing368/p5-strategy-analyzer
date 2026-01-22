@@ -35,85 +35,8 @@ const LOOKBACKS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 // --- Main Thread Functions (Single Strategy Analysis) ---
 
-export const generateStrategies = (): StrategyConfig[] => {
-  // NOTE: This function is kept for reference or single-use if needed, 
-  // but the Worker now generates its own strategies to avoid massive data transfer overhead.
-  const strategies: StrategyConfig[] = [];
-  const positions = [0, 1, 2, 3, 4];
-  const targetGroups = getCombinations(positions, 3);
-
-  const addVariations = (type: FormulaType, inputs: number[], ops: OpType[], baseName: string) => {
-    targetGroups.forEach(targets => {
-      OFFSETS.forEach(offset => {
-        LOOKBACKS.forEach(lookback => {
-            const nameSuffix = offset > 0 ? `+${offset}` : '';
-            const lbSuffix = lookback > 1 ? `(回${lookback})` : '';
-            strategies.push({
-              id: `${type}-${inputs.join('')}-${ops.join('')}-T${targets.join('')}-K${offset}-L${lookback}`,
-              type,
-              inputIndices: inputs,
-              operators: ops,
-              targetIndices: targets,
-              offset,
-              lookback,
-              name: `${baseName}${nameSuffix}${lbSuffix}`
-            });
-        });
-      });
-    });
-  };
-
-  // Type 0-4 Logic mirroring the worker...
-  positions.forEach(idx => addVariations(FormulaType.ONE_POS, [idx], [], POS_NAMES[idx]));
-  const inputPairs = getCombinations(positions, 2);
-  const ops2 = getOpPermutations(1); 
-  inputPairs.forEach(inputs => ops2.forEach(ops => addVariations(FormulaType.TWO_POS, inputs, ops, `${POS_NAMES[inputs[0]]}${ops[0]}${POS_NAMES[inputs[1]]}`)));
-  const inputTriples = getCombinations(positions, 3);
-  const ops3 = getOpPermutations(2); 
-  inputTriples.forEach(inputs => ops3.forEach(ops => addVariations(FormulaType.THREE_POS, inputs, ops, `${POS_NAMES[inputs[0]]}${ops[0]}${POS_NAMES[inputs[1]]}${ops[1]}${POS_NAMES[inputs[2]]}`)));
-  const inputQuads = getCombinations(positions, 4);
-  const ops4 = getOpPermutations(3); 
-  inputQuads.forEach(inputs => ops4.forEach(ops => addVariations(FormulaType.FOUR_POS, inputs, ops, `${POS_NAMES[inputs[0]]}${ops[0]}${POS_NAMES[inputs[1]]}${ops[1]}${POS_NAMES[inputs[2]]}${ops[2]}${POS_NAMES[inputs[3]]}`)));
-  const inputFive = [0,1,2,3,4];
-  const ops5 = getOpPermutations(4); 
-  ops5.forEach(ops => addVariations(FormulaType.FIVE_POS, inputFive, ops, `${POS_NAMES[0]}${ops[0]}${POS_NAMES[1]}${ops[1]}${POS_NAMES[2]}${ops[2]}${POS_NAMES[3]}${ops[3]}${POS_NAMES[4]}`));
-
-  return strategies;
-};
-
-export const getReferenceBase = (numbers: number[], config: StrategyConfig): number => {
-  let sum = 0;
-  const idx = config.inputIndices;
-  const ops = config.operators;
-  
-  if (config.type === FormulaType.ONE_POS) sum = numbers[idx[0]];
-  else if (config.type === FormulaType.TWO_POS) {
-    const v1 = numbers[idx[0]], v2 = numbers[idx[1]];
-    sum = ops[0] === '+' ? v1+v2 : ops[0] === '-' ? v1-v2 : v1*v2;
-  } 
-  else if (config.type === FormulaType.THREE_POS) {
-    let temp = numbers[idx[0]];
-    const v2 = numbers[idx[1]], v3 = numbers[idx[2]];
-    temp = ops[0] === '+' ? temp+v2 : ops[0] === '-' ? temp-v2 : temp*v2;
-    sum = ops[1] === '+' ? temp+v3 : ops[1] === '-' ? temp-v3 : temp*v3;
-  }
-  else if (config.type === FormulaType.FOUR_POS || config.type === FormulaType.FIVE_POS) {
-     let temp = numbers[idx[0]];
-     for(let k=0; k<ops.length; k++) {
-         const val = numbers[idx[k+1]];
-         const op = ops[k];
-         if (op === '+') temp += val;
-         else if (op === '-') temp -= val;
-         else if (op === '*') temp *= val;
-     }
-     sum = temp;
-  }
-  return (Math.abs(sum) + config.offset) % 10;
-};
-
+// Keep this full version for ON-DEMAND detail calculation in UI
 export const analyzeStrategy = (config: StrategyConfig, draws: DrawData[]): StrategyStats => {
-  // Keep the original single-strategy logic for Detail View
-  // Logic duplication is acceptable here to keep Detail View independent of Worker
   let totalProfit = 0, winDraws = 0, currentStreak = 0, maxWinStreak = 0, maxLoseStreak = 0, peakProfit = 0, maxDrawdown = 0;
   const streakCounts = { win: {} as StreakCounts, loss: {} as StreakCounts };
   const annualMap = new Map<string, { profit: number, wins: number, count: number }>();
@@ -204,7 +127,38 @@ export const analyzeStrategy = (config: StrategyConfig, draws: DrawData[]): Stra
   };
 };
 
+export const getReferenceBase = (numbers: number[], config: StrategyConfig): number => {
+  let sum = 0;
+  const idx = config.inputIndices;
+  const ops = config.operators;
+  
+  if (config.type === FormulaType.ONE_POS) sum = numbers[idx[0]];
+  else if (config.type === FormulaType.TWO_POS) {
+    const v1 = numbers[idx[0]], v2 = numbers[idx[1]];
+    sum = ops[0] === '+' ? v1+v2 : ops[0] === '-' ? v1-v2 : v1*v2;
+  } 
+  else if (config.type === FormulaType.THREE_POS) {
+    let temp = numbers[idx[0]];
+    const v2 = numbers[idx[1]], v3 = numbers[idx[2]];
+    temp = ops[0] === '+' ? temp+v2 : ops[0] === '-' ? temp-v2 : temp*v2;
+    sum = ops[1] === '+' ? temp+v3 : ops[1] === '-' ? temp-v3 : temp*v3;
+  }
+  else if (config.type === FormulaType.FOUR_POS || config.type === FormulaType.FIVE_POS) {
+     let temp = numbers[idx[0]];
+     for(let k=0; k<ops.length; k++) {
+         const val = numbers[idx[k+1]];
+         const op = ops[k];
+         if (op === '+') temp += val;
+         else if (op === '-') temp -= val;
+         else if (op === '*') temp *= val;
+     }
+     sum = temp;
+  }
+  return (Math.abs(sum) + config.offset) % 10;
+};
+
 export const generateHistory = (config: StrategyConfig, draws: DrawData[]): PeriodStat[] => {
+    // Only used for UI display, uses Main Thread
     const history: PeriodStat[] = [];
     let cumulativeProfit = 0;
     const targetIndices = config.targetIndices;
@@ -248,7 +202,7 @@ export const parseCSV = (text: string): DrawData[] => {
   return data.sort((a, b) => a.issue.localeCompare(b.issue));
 };
 
-// --- WEB WORKER IMPLEMENTATION ---
+// --- MULTI-THREADED WEB WORKER IMPLEMENTATION ---
 
 const workerCode = `
 const WIN_PROFIT = 606;
@@ -269,57 +223,48 @@ function getOpPermutations(length) {
 }
 
 self.onmessage = function(e) {
-    const draws = e.data;
+    const { draws, workerId, totalWorkers } = e.data;
     const drawCount = draws.length;
-    
-    // We will generate formula definitions first
-    // Then iterate formulas -> lookbacks -> Precalculate Refs -> Offsets -> Targets
-    // This reduces redundant calculations massively.
     
     const positions = [0, 1, 2, 3, 4];
     const targetGroups = getCombinations(positions, 3);
     const formulas = [];
 
-    // Define Formulas (Input Indices + Operators)
-    // 1-Pos
+    // Define Formulas (Same logic as before)
     positions.forEach(idx => formulas.push({ type: '1-Pos', inputs: [idx], ops: [], name: POS_NAMES[idx] }));
-    // 2-Pos
     const inputPairs = getCombinations(positions, 2);
     const ops2 = getOpPermutations(1);
     inputPairs.forEach(inputs => ops2.forEach(ops => formulas.push({ type: '2-Pos', inputs, ops, name: \`\${POS_NAMES[inputs[0]]}\${ops[0]}\${POS_NAMES[inputs[1]]}\` })));
-    // 3-Pos
     const inputTriples = getCombinations(positions, 3);
     const ops3 = getOpPermutations(2);
-    inputTriples.forEach(inputs => ops3.forEach(ops => formulas.push({ type: '3-Pos', inputs, ops, name: \`\${POS_NAMES[inputs[0]]}\${ops[0]}\${POS_NAMES[inputs[1]]}\${ops[1]}\${POS_NAMES[inputs[2]]}\` })));
-    // 4-Pos
+    inputTriples.forEach(inputs => ops3.forEach(ops => formulas.push({ type: '3-Pos', inputs, ops, name: \`\${POS_NAMES[inputs[0]]}\${ops[0]}\${POS_NAMES[inputs[1]]}\${ops[1]}\${POS_NAMES[inputs[2]]}\${ops[2]}\${POS_NAMES[inputs[3]]}\` })));
     const inputQuads = getCombinations(positions, 4);
     const ops4 = getOpPermutations(3);
     inputQuads.forEach(inputs => ops4.forEach(ops => formulas.push({ type: '4-Pos', inputs, ops, name: \`\${POS_NAMES[inputs[0]]}\${ops[0]}\${POS_NAMES[inputs[1]]}\${ops[1]}\${POS_NAMES[inputs[2]]}\${ops[2]}\${POS_NAMES[inputs[3]]}\` })));
-    // 5-Pos
     const inputFive = [0,1,2,3,4];
     const ops5 = getOpPermutations(4);
     ops5.forEach(ops => formulas.push({ type: '5-Pos', inputs: inputFive, ops, name: \`\${POS_NAMES[0]}\${ops[0]}\${POS_NAMES[1]}\${ops[1]}\${POS_NAMES[2]}\${ops[2]}\${POS_NAMES[3]}\${ops[3]}\${POS_NAMES[4]}\` }));
 
     const results = [];
     
-    // BATCH PROCESSING
-    // Loop Formulas
+    // BATCH PROCESSING WITH WORKER PARTITIONING
+    // We only process formulas where (index % totalWorkers === workerId)
+    
     for (let f = 0; f < formulas.length; f++) {
+        // PARALLELIZATION KEY:
+        if (f % totalWorkers !== workerId) continue;
+        
         const form = formulas[f];
         
-        // Loop Lookbacks
         for (let l = 0; l < LOOKBACKS.length; l++) {
             const lookback = LOOKBACKS[l];
             
-            // Pre-calculate Reference Number A (Base without offset) for all draws
-            // RefBase[i] corresponds to draws[i] using data from draws[i-lookback]
+            // Pre-calculate Reference Base
             const refBaseArray = new Int8Array(drawCount);
-            
             for (let i = lookback; i < drawCount; i++) {
                 const srcNum = draws[i - lookback].numbers;
                 let sum = 0;
                 
-                // Inline Calculation Logic for speed
                 if (form.type === '1-Pos') sum = srcNum[form.inputs[0]];
                 else if (form.type === '2-Pos') {
                     const v1 = srcNum[form.inputs[0]], v2 = srcNum[form.inputs[1]];
@@ -339,29 +284,24 @@ self.onmessage = function(e) {
                     }
                     sum = t;
                 }
-                refBaseArray[i] = Math.abs(sum) % 10; // Base Mod 10
+                refBaseArray[i] = Math.abs(sum) % 10; 
             }
 
-            // Loop Offsets
             for (let o = 0; o < OFFSETS.length; o++) {
                 const offset = OFFSETS[o];
                 
-                // Calculate Final RefA for this offset
-                // This is fast vector op
+                // Pre-calc refA/refB for this Offset
                 const refA_Array = new Int8Array(drawCount);
                 const refB_Array = new Int8Array(drawCount);
-                
                 for(let i = lookback; i < drawCount; i++) {
                     const ra = (refBaseArray[i] + offset) % 10;
                     refA_Array[i] = ra;
                     refB_Array[i] = (ra + 5) % 10;
                 }
 
-                // Loop Targets
                 for (let t = 0; t < targetGroups.length; t++) {
                     const targets = targetGroups[t];
                     
-                    // --- ANALYSIS START ---
                     let totalProfit = 0;
                     let winDraws = 0;
                     let currentStreak = 0;
@@ -369,18 +309,11 @@ self.onmessage = function(e) {
                     let maxLoseStreak = 0;
                     let peakProfit = 0;
                     let maxDrawdown = 0;
-                    
                     const streakCounts = { win: {}, loss: {} };
-                    const annualMap = {}; // Use obj for speed then convert
+                    const winHistory = new Uint8Array(drawCount);
 
-                    // To track win/loss for survival stats
-                    const winHistory = new Uint8Array(drawCount); // 1=Win, 0=Loss
-
-                    // Inner Loop over Draws
                     for (let i = lookback; i < drawCount; i++) {
                          const n = draws[i].numbers;
-                         // Check win
-                         // targets is array of 3 indices
                          const ra = refA_Array[i];
                          const rb = refB_Array[i];
                          
@@ -417,22 +350,14 @@ self.onmessage = function(e) {
                              }
                              if (-currentStreak > maxLoseStreak) maxLoseStreak = -currentStreak;
                          }
-
-                         const year = draws[i].issue.substring(0,4);
-                         if(!annualMap[year]) annualMap[year] = {p:0, w:0, c:0};
-                         annualMap[year].p += profit;
-                         annualMap[year].c++;
-                         if(isWin) annualMap[year].w++;
                     }
-
-                    // Final Streak
+                    // Final streak push
                     if (currentStreak > 0) streakCounts.win[currentStreak] = (streakCounts.win[currentStreak] || 0) + 1;
-                    else if (currentStreak < 0) {
-                        const abs = -currentStreak;
-                        streakCounts.loss[abs] = (streakCounts.loss[abs] || 0) + 1;
-                    }
+                    else if (currentStreak < 0) streakCounts.loss[-currentStreak] = (streakCounts.loss[-currentStreak] || 0) + 1;
 
                     // Survival Stats
+                    let survivalCount = 0;
+                    let survivalPeriodsSum = 0;
                     const survivalPeriods = [];
                     let tempStreak = 0;
                     for (let i = lookback; i < drawCount; i++) {
@@ -441,36 +366,26 @@ self.onmessage = function(e) {
                             tempStreak++;
                         } else {
                             if (tempStreak >= 9) {
-                                // Break
-                                let simPnL = 0;
-                                let simCount = 0;
+                                let simPnL = 0, simCount = 0;
                                 for (let j = i + 1; j < drawCount; j++) {
                                     simPnL += (winHistory[j]===1) ? WIN_PROFIT : LOSE_COST;
                                     simCount++;
                                     if (simPnL <= -1000) break;
                                 }
                                 survivalPeriods.push(simCount);
+                                survivalCount++;
+                                survivalPeriodsSum += simCount;
                             }
                             tempStreak = -1;
                         }
                     }
 
-                    // Build Config Object
                     const nameSuffix = offset > 0 ? ('+'+offset) : '';
                     const lbSuffix = lookback > 1 ? ('(回'+lookback+')') : '';
-                    
-                    const annualStats = Object.keys(annualMap).sort().map(y => ({
-                        year: y,
-                        profit: annualMap[y].p,
-                        winCount: annualMap[y].w,
-                        totalCount: annualMap[y].c
-                    }));
-                    
                     const processedCount = Math.max(0, drawCount - lookback);
                     const grossProfit = winDraws * WIN_PROFIT;
                     const grossLoss = (processedCount - winDraws) * Math.abs(LOSE_COST);
-                    
-                    const avgSurv = survivalPeriods.length > 0 ? (survivalPeriods.reduce((a,b)=>a+b,0)/survivalPeriods.length) : 0;
+                    const avgSurv = survivalCount > 0 ? (survivalPeriodsSum / survivalCount) : 0;
 
                     results.push({
                         config: {
@@ -493,10 +408,10 @@ self.onmessage = function(e) {
                         maxDrawdown: maxDrawdown,
                         currentStreak: currentStreak,
                         isOverheated: currentStreak >= 8,
-                        annualStats: annualStats,
+                        annualStats: [],
                         streakCounts: streakCounts,
                         survivalStats: {
-                            count: survivalPeriods.length,
+                            count: survivalCount,
                             periods: survivalPeriods,
                             avgPeriods: avgSurv
                         }
@@ -505,26 +420,61 @@ self.onmessage = function(e) {
             }
         }
     }
-    
     self.postMessage(results);
 };
 `;
 
 export const runAnalysisWorker = (draws: DrawData[]): Promise<StrategyStats[]> => {
+    // Detect Logical Cores
+    const cores = navigator.hardwareConcurrency || 4;
+    // Use slightly fewer workers than cores to keep UI responsive if cores > 4
+    const workerCount = cores > 1 ? cores : 1; 
+
     return new Promise((resolve, reject) => {
         const blob = new Blob([workerCode], { type: 'application/javascript' });
-        const worker = new Worker(URL.createObjectURL(blob));
+        const workerUrl = URL.createObjectURL(blob);
         
-        worker.onmessage = (e) => {
-            resolve(e.data);
-            worker.terminate();
-        };
+        let completedWorkers = 0;
+        let aggregatedResults: StrategyStats[] = [];
+        const workers: Worker[] = [];
         
-        worker.onerror = (e) => {
-            reject(e);
-            worker.terminate();
-        };
-        
-        worker.postMessage(draws);
+        // Timer for debugging speed
+        const startTime = performance.now();
+
+        for (let i = 0; i < workerCount; i++) {
+            const worker = new Worker(workerUrl);
+            workers.push(worker);
+            
+            worker.onmessage = (e) => {
+                const resultsPart = e.data;
+                aggregatedResults = aggregatedResults.concat(resultsPart);
+                completedWorkers++;
+                
+                if (completedWorkers === workerCount) {
+                    const duration = (performance.now() - startTime).toFixed(0);
+                    console.log(`Parallel Analysis Complete: ${aggregatedResults.length} strategies in ${duration}ms using ${workerCount} threads.`);
+                    resolve(aggregatedResults);
+                    workers.forEach(w => w.terminate());
+                    URL.revokeObjectURL(workerUrl);
+                }
+            };
+            
+            worker.onerror = (e) => {
+                console.error("Worker error", e);
+                reject(e);
+                workers.forEach(w => w.terminate());
+            };
+
+            // Start worker with specific partition ID
+            worker.postMessage({ 
+                draws, 
+                workerId: i, 
+                totalWorkers: workerCount 
+            });
+        }
     });
+};
+
+export const getWorkerCount = () => {
+   return navigator.hardwareConcurrency || 4;
 };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DrawData, StrategyStats } from './types';
-import { parseCSV, runAnalysisWorker } from './services/strategyService';
+import { parseCSV, runAnalysisWorker, analyzeStrategy as analyzeSingleStrategy, getWorkerCount } from './services/strategyService';
 import FileUpload from './components/FileUpload';
 import StrategyDashboard from './components/StrategyDashboard';
 import StrategyDetail from './components/StrategyDetail';
@@ -11,10 +11,14 @@ function App() {
   const [results, setResults] = useState<StrategyStats[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedStrategy, setSelectedStrategy] = useState<StrategyStats | null>(null);
+  const [detailedStrategy, setDetailedStrategy] = useState<StrategyStats | null>(null); // For detail view with full data
   const [showManualInput, setShowManualInput] = useState(false);
   
   // Pinned Logic
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+
+  // Hardware info
+  const cpuCores = getWorkerCount();
 
   useEffect(() => {
     const saved = localStorage.getItem('p5_pinned_strategies');
@@ -40,16 +44,18 @@ function App() {
 
   const runAnalysis = async (currentDraws: DrawData[]) => {
     setLoading(true);
-    // Use the Web Worker implementation to avoid UI blocking
-    try {
-        const stats = await runAnalysisWorker(currentDraws);
-        setResults(stats);
-    } catch (e) {
-        console.error("Worker Analysis Failed:", e);
-        alert("策略分析计算失败，请检查数据格式。");
-    } finally {
-        setLoading(false);
-    }
+    // Add small delay to allow UI to render the loading spinner
+    setTimeout(async () => {
+        try {
+            const stats = await runAnalysisWorker(currentDraws);
+            setResults(stats);
+        } catch (e) {
+            console.error("Worker Analysis Failed:", e);
+            alert("策略分析计算失败，请检查数据格式。");
+        } finally {
+            setLoading(false);
+        }
+    }, 100);
   };
 
   const handleDataLoaded = (csvContent: string) => {
@@ -82,7 +88,16 @@ function App() {
       
       if (selectedStrategy) {
           setSelectedStrategy(null); 
+          setDetailedStrategy(null);
       }
+  };
+
+  const handleSelectStrategy = (summary: StrategyStats) => {
+      // Calculate FULL details on main thread instantly
+      // This bridges the "Light" worker data with "Heavy" UI requirements
+      const fullDetails = analyzeSingleStrategy(summary.config, draws);
+      setDetailedStrategy(fullDetails);
+      setSelectedStrategy(summary);
   };
 
   return (
@@ -102,15 +117,41 @@ function App() {
       <main className="container mx-auto px-4 py-8 max-w-7xl">
         
         {results.length === 0 ? (
-          <div className="max-w-xl mx-auto mt-20">
-            <FileUpload onDataLoaded={handleDataLoaded} isLoading={loading} />
-            
-            {loading && (
+          <div className="max-w-xl mx-auto mt-20 animate-in fade-in zoom-in duration-500">
+            {loading ? (
                <div className="mt-8 text-center space-y-3">
                  <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-indigo-500 border-t-transparent"></div>
-                 <p className="text-slate-400 animate-pulse">正在后台加速计算 200,000+ 个策略模型...</p>
-                 <p className="text-xs text-slate-600">采用 Web Worker 多线程技术，请稍候</p>
+                 <p className="text-slate-400 animate-pulse font-bold text-lg">正在全速计算中...</p>
+                 <div className="flex items-center justify-center gap-2 text-xs text-slate-500 bg-slate-900/50 py-1 px-3 rounded-full mx-auto w-fit">
+                    <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                    <span>调用本机 {cpuCores} 个 CPU 核心并行处理</span>
+                 </div>
+                 <p className="text-xs text-slate-600">正在回测 200,000+ 个策略模型，数据量较大请耐心等待</p>
                </div>
+            ) : (
+                <div className="text-center bg-slate-900/50 p-12 rounded-3xl border border-slate-800 shadow-2xl backdrop-blur-sm">
+                    <div className="w-20 h-20 bg-indigo-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 rotate-3">
+                        <svg className="w-10 h-10 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                    </div>
+                    <h2 className="text-3xl font-bold text-white mb-3 tracking-tight">开始策略分析</h2>
+                    <p className="text-slate-400 mb-10 text-lg">请导入历史开奖数据 (CSV/TXT) 或手动录入数据以启动回测系统。</p>
+                    
+                    <div className="flex gap-4 justify-center items-center">
+                       <FileUpload 
+                            onDataLoaded={handleDataLoaded} 
+                            isLoading={loading} 
+                            customClass="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-base font-bold rounded-xl shadow-lg shadow-indigo-500/20 transition-all hover:scale-105 cursor-pointer"
+                       />
+                       
+                       <button 
+                         onClick={() => setShowManualInput(true)}
+                         className="px-8 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-base font-bold rounded-xl border border-slate-700 hover:border-slate-600 transition-all"
+                       >
+                         手动录入
+                       </button>
+                    </div>
+                    <p className="mt-8 text-xs text-slate-600">推荐使用 PC 浏览器访问以获得最佳计算性能</p>
+                </div>
             )}
           </div>
         ) : (
@@ -139,11 +180,12 @@ function App() {
                    >
                      <span>+</span> 手动录入开奖
                    </button>
+                   <FileUpload onDataLoaded={handleDataLoaded} isLoading={loading} />
                    <button 
                      onClick={() => { setResults([]); setDraws([]); }}
                      className="px-4 py-2 bg-slate-800 hover:bg-rose-900/30 hover:text-rose-400 text-slate-400 text-sm font-medium rounded-lg transition-colors border border-transparent hover:border-rose-900"
                    >
-                     重置数据
+                     清空
                    </button>
                </div>
             </div>
@@ -151,27 +193,27 @@ function App() {
             {loading ? (
                 <div className="text-center py-20">
                     <div className="inline-block animate-spin rounded-full h-10 w-10 border-4 border-indigo-500 border-t-transparent mb-4"></div>
-                    <p className="text-slate-400">正在重新计算策略数据...</p>
-                    <p className="text-xs text-slate-600 mt-2">后台线程运行中，界面保持响应</p>
+                    <p className="text-slate-400 font-bold">正在重新计算策略数据...</p>
+                    <p className="text-xs text-slate-600 mt-2">后台 {cpuCores} 线程并发运行中，请勿关闭页面</p>
                 </div>
             ) : (
                 <StrategyDashboard 
                   strategies={results} 
                   pinnedIds={pinnedIds}
-                  onSelectStrategy={setSelectedStrategy} 
+                  onSelectStrategy={handleSelectStrategy} 
                   onTogglePin={togglePin}
                 />
             )}
           </div>
         )}
 
-        {selectedStrategy && (
+        {detailedStrategy && (
           <StrategyDetail 
-            strategy={selectedStrategy} 
+            strategy={detailedStrategy} 
             allDraws={draws}
-            isPinned={pinnedIds.has(selectedStrategy.config.id)}
-            onTogglePin={() => togglePin(selectedStrategy.config.id)}
-            onClose={() => setSelectedStrategy(null)} 
+            isPinned={pinnedIds.has(detailedStrategy.config.id)}
+            onTogglePin={() => togglePin(detailedStrategy.config.id)}
+            onClose={() => { setSelectedStrategy(null); setDetailedStrategy(null); }} 
           />
         )}
 
